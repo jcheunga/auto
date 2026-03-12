@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Automation Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/assets/dashboard.css" />
+  </head>
+  <body>
+    <div class="bg-shape bg-shape-a"></div>
+    <div class="bg-shape bg-shape-b"></div>
+
+    <main class="layout">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">MONDAY x GITHUB x HEROKU</p>
+          <h1>Automation Control Tower</h1>
+          <p id="last-refresh" class="muted">Loading...</p>
+        </div>
+        <button id="refresh-btn" class="btn">Refresh Now</button>
+      </header>
+
+      <section class="cards" id="summary-cards"></section>
+
+      <section class="panel">
+        <div class="panel-title-row">
+          <h2>Queue Jobs</h2>
+          <span class="hint">Newest first</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Item</th>
+                <th>Status</th>
+                <th>Attempts</th>
+                <th>Available</th>
+                <th>Error</th>
+              </tr>
+            </thead>
+            <tbody id="queue-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title-row">
+          <h2>Work Items</h2>
+          <span class="hint">Latest updates</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Monday Item</th>
+                <th>Status</th>
+                <th>Repo</th>
+                <th>Branch</th>
+                <th>PR</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody id="items-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title-row">
+          <h2>Webhook History</h2>
+          <span class="hint">Ingress audit log</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Event</th>
+                <th>Item</th>
+                <th>Queue</th>
+                <th>HTTP</th>
+                <th>Payload</th>
+              </tr>
+            </thead>
+            <tbody id="webhooks-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title-row">
+          <h2>Action History</h2>
+          <span class="hint">What workers actually did</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Level</th>
+                <th>Action</th>
+                <th>Item</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody id="actions-table"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="/assets/dashboard.js" defer></script>
+  </body>
+</html>
