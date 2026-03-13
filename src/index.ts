@@ -40,7 +40,8 @@ const monday = new MondayClient(
 
 const workflowAgent = new ClaudeWorkflowAgent({
   githubToken: config.github.token,
-  command: config.codeAgent.command
+  command: config.codeAgent.command,
+  gitWorkspaceRoot: config.github.workspaceRoot
 });
 
 const heroku = new HerokuClient(

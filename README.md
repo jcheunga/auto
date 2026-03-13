@@ -17,6 +17,7 @@ This service automates a Monday workflow:
 - `src/orchestrator.ts`: workflow state machine + worker scheduler.
 - `src/integrations/monday.ts`: Monday GraphQL client.
 - `src/integrations/github.ts`: GitHub CLI-backed client via `gh`.
+- `src/integrations/gitWorkspace.ts`: persistent repo cache + per-job isolated git worktrees.
 - `src/integrations/workflowAgent.ts`: Claude-driven orchestration runner and review-app follow-up callback.
 - `src/integrations/heroku.ts`: Heroku review-app creation client.
 - `src/db.ts`: SQLite persistence for item/PR mapping and durable event queue.
@@ -56,6 +57,7 @@ Optional but recommended:
 
 - `LOG_LEVEL`
 - `MONDAY_SIGNING_SECRET`
+- `GIT_WORKSPACE_ROOT`
 - `CODE_AGENT_COMMAND`
 - `WORKER_CONCURRENCY`
 - `WORKER_MAX_RETRIES` and `WORKER_RETRY_DELAY_SECONDS`
@@ -70,6 +72,9 @@ The service delegates workflow decisions to this command. It sets these env vars
 - `WORK_RESULT_FILE`: path where the agent must write a JSON result
 - `AUTOMATION_MODE`: `orchestrate` for PR work, `review_app_followup` for the Monday postback after Heroku succeeds
 - `GITHUB_TOKEN`: passed through for `gh` CLI access
+- `WORK_REPO_DIR`: isolated per-job repo workspace path for `AUTOMATION_MODE=orchestrate`
+- `WORK_REPO_OWNER`, `WORK_REPO_NAME`, `WORK_BASE_BRANCH`, `WORK_BRANCH`: resolved git routing details
+- `GIT_ASKPASS`: preconfigured helper so plain `git fetch/push` inside the worktree can use `GITHUB_TOKEN`
 
 Example:
 
@@ -81,6 +86,7 @@ The intended Claude behavior is:
 
 - read `WORK_CONTEXT_FILE`
 - decide `create_pr`, `revise_pr`, `reply_only`, or `noop`
+- use the already-prepared isolated git workspace at `WORK_REPO_DIR`
 - use `gh` for GitHub operations
 - use Monday MCP for Monday follow-up updates
 - do not create Heroku review apps during the main orchestration step
@@ -107,6 +113,7 @@ When `AUTOMATION_MODE=review_app_followup`, Claude should:
 - Webhooks are written to a durable SQLite queue table before processing.
 - Worker concurrency is controlled with `WORKER_CONCURRENCY`.
 - The worker enforces per-item locking, so updates for one Monday item stay ordered while different items run in parallel.
+- Each orchestrated code job gets its own isolated git worktree, so concurrent tasks do not share a checkout or branch state.
 - Failed jobs are retried using `WORKER_MAX_RETRIES` and `WORKER_RETRY_DELAY_SECONDS`.
 
 ## Running
@@ -117,8 +124,9 @@ npm run dev
 
 The app expects `gh` to be installed and uses `GITHUB_TOKEN` for both:
 - `gh api` calls for PR creation/comments
-- git HTTPS auth via `gh auth git-credential`
+- git HTTPS auth inside isolated worktrees via `GIT_ASKPASS`
 - The Claude environment should also have Monday MCP configured because Claude is responsible for posting follow-up replies, including the review-app link after the service creates it.
+- For `AUTOMATION_MODE=orchestrate`, the service prepares a repo cache under `GIT_WORKSPACE_ROOT` and launches Claude inside a short-lived isolated worktree.
 
 Health check:
 

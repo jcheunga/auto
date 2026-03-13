@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { ZodType, z } from "zod";
+import { GitWorkspaceManager } from "./gitWorkspace";
 import { appLogger } from "../lib/appLogger";
 import { serializeError } from "../lib/logger";
 import { runCommand } from "../lib/shell";
@@ -60,21 +61,43 @@ export interface WorkflowAgent {
 interface ClaudeWorkflowAgentConfig {
   command?: string;
   githubToken: string;
+  gitWorkspaceRoot: string;
 }
 
 export class ClaudeWorkflowAgent implements WorkflowAgent {
   private readonly logger = appLogger.child({ component: "workflow-agent" });
+  private readonly gitWorkspaceManager: GitWorkspaceManager;
 
-  constructor(private readonly cfg: ClaudeWorkflowAgentConfig) {}
+  constructor(private readonly cfg: ClaudeWorkflowAgentConfig) {
+    this.gitWorkspaceManager = new GitWorkspaceManager({
+      rootDir: cfg.gitWorkspaceRoot,
+      githubToken: cfg.githubToken
+    });
+  }
 
   async run(context: WorkflowAgentContext): Promise<WorkflowAgentResult> {
-    return this.runAgentCommand({
-      mode: "orchestrate",
-      itemId: context.item.mondayItemId,
-      payload: context,
-      schema: workflowAgentResultSchema,
-      promptBuilder: buildWorkflowPrompt
-    });
+    const gitWorkspace = await this.gitWorkspaceManager.prepareWorkflowWorkspace(context);
+
+    try {
+      return await this.runAgentCommand({
+        mode: "orchestrate",
+        itemId: context.item.mondayItemId,
+        payload: context,
+        schema: workflowAgentResultSchema,
+        promptBuilder: buildWorkflowPrompt,
+        cwd: gitWorkspace.worktreeDir,
+        extraEnv: {
+          WORK_REPO_DIR: gitWorkspace.worktreeDir,
+          WORK_REPO_OWNER: gitWorkspace.repository.owner,
+          WORK_REPO_NAME: gitWorkspace.repository.repo,
+          WORK_BASE_BRANCH: gitWorkspace.repository.baseBranch,
+          WORK_BRANCH: gitWorkspace.repository.branch ?? "",
+          GIT_ASKPASS: gitWorkspace.gitAskPassPath
+        }
+      });
+    } finally {
+      await gitWorkspace.cleanup();
+    }
   }
 
   async announceReviewApp(
@@ -95,14 +118,16 @@ export class ClaudeWorkflowAgent implements WorkflowAgent {
     payload: TPayload;
     schema: ZodType<TResult>;
     promptBuilder: (payload: TPayload, contextFile: string, resultFile: string) => string;
+    cwd?: string;
+    extraEnv?: NodeJS.ProcessEnv;
   }): Promise<TResult> {
     if (!this.cfg.command) {
       throw new Error("CODE_AGENT_COMMAND is required for Claude-driven orchestration");
     }
 
-    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "workflow-agent-"));
-    const contextFile = path.join(workspace, "context.json");
-    const resultFile = path.join(workspace, "result.json");
+    const sessionDir = await fs.mkdtemp(path.join(os.tmpdir(), "workflow-agent-"));
+    const contextFile = path.join(sessionDir, "context.json");
+    const resultFile = path.join(sessionDir, "result.json");
     const prompt = input.promptBuilder(input.payload, contextFile, resultFile);
     const startedAt = Date.now();
 
@@ -113,11 +138,12 @@ export class ClaudeWorkflowAgent implements WorkflowAgent {
         itemId: input.itemId,
         mode: input.mode,
         command: commandLabel(this.cfg.command),
-        workspace
+        sessionDir,
+        cwd: input.cwd ?? sessionDir
       });
 
       await runCommand(this.cfg.command, {
-        cwd: workspace,
+        cwd: input.cwd ?? sessionDir,
         env: {
           ...process.env,
           GITHUB_TOKEN: this.cfg.githubToken,
@@ -126,7 +152,8 @@ export class ClaudeWorkflowAgent implements WorkflowAgent {
           AUTOMATION_MODE: input.mode,
           WORK_CONTEXT_FILE: contextFile,
           WORK_RESULT_FILE: resultFile,
-          WORK_PROMPT: prompt
+          WORK_PROMPT: prompt,
+          ...input.extraEnv
         }
       });
 
@@ -149,7 +176,7 @@ export class ClaudeWorkflowAgent implements WorkflowAgent {
       });
       throw error;
     } finally {
-      await fs.rm(workspace, { recursive: true, force: true });
+      await fs.rm(sessionDir, { recursive: true, force: true });
     }
   }
 }
@@ -169,10 +196,14 @@ function buildWorkflowPrompt(
     "Operational rules:",
     "- Read the full context JSON from this file:",
     `  ${contextFile}`,
+    "- The repository is already checked out in an isolated per-job git worktree.",
+    "- Your current working directory is that isolated repository workspace.",
+    "- The WORK_REPO_DIR environment variable also points to that repository path.",
     "- Use gh CLI for repository, branch, commit, push, and PR operations.",
     "- Use Monday MCP for any Monday follow-up updates or clarifying replies.",
     "- Do not create or manage Heroku review apps in this step. The automation service handles review-app creation separately.",
     "- If a review app becomes available later, you may be called again to post that URL back to Monday.",
+    "- Do not reuse or mutate any shared external checkout. Stay inside the isolated worktree for this job.",
     `- If you post to Monday, prefix the update with ${context.automationTag}.`,
     "- Prefer revising the existing tracked branch/PR when one already exists.",
     "- If no branch/PR exists yet, create one.",
@@ -226,7 +257,14 @@ function buildWorkflowPrompt(
     `- Default repo: ${context.defaults.githubOwner}/${context.defaults.githubRepo}`,
     `- Default base branch: ${context.defaults.githubBaseBranch}`,
     `- Repo hint: ${context.hints.repoHint ?? "none"}`,
-    `- Base branch hint: ${context.hints.baseBranchHint ?? "none"}`
+    `- Base branch hint: ${context.hints.baseBranchHint ?? "none"}`,
+    "",
+    "Environment hints:",
+    "- WORK_REPO_DIR: isolated repo workspace path",
+    "- WORK_REPO_OWNER: resolved repository owner",
+    "- WORK_REPO_NAME: resolved repository name",
+    "- WORK_BASE_BRANCH: resolved base branch",
+    "- WORK_BRANCH: existing tracked branch if any"
   ].join("\n");
 }
 

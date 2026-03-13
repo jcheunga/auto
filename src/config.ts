@@ -18,6 +18,7 @@ const envSchema = z.object({
   GITHUB_OWNER: z.string().min(1),
   GITHUB_REPO: z.string().min(1),
   GITHUB_BASE_BRANCH: z.string().default("main"),
+  GIT_WORKSPACE_ROOT: z.string().default("./data/git-workspaces"),
 
   CODE_AGENT_COMMAND: z.string().optional(),
 
@@ -57,7 +58,8 @@ export const config = {
     token: githubToken,
     owner: parsed.data.GITHUB_OWNER,
     repo: parsed.data.GITHUB_REPO,
-    baseBranch: parsed.data.GITHUB_BASE_BRANCH
+    baseBranch: parsed.data.GITHUB_BASE_BRANCH,
+    workspaceRoot: parsed.data.GIT_WORKSPACE_ROOT
   },
 
   codeAgent: {
