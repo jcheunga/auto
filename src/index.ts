@@ -2,6 +2,7 @@ import express from "express";
 import path from "node:path";
 import { config } from "./config";
 import { AppDb } from "./db";
+import { HerokuClient } from "./integrations/heroku";
 import { MondayClient } from "./integrations/monday";
 import { ClaudeWorkflowAgent } from "./integrations/workflowAgent";
 import { appLogger } from "./lib/appLogger";
@@ -39,10 +40,16 @@ const monday = new MondayClient(
 
 const workflowAgent = new ClaudeWorkflowAgent({
   githubToken: config.github.token,
-  command: config.codeAgent.command,
+  command: config.codeAgent.command
 });
 
-const orchestrator = new AutomationOrchestrator(db, config, monday, workflowAgent);
+const heroku = new HerokuClient(
+  config.heroku.apiToken,
+  config.heroku.pipelineId,
+  config.heroku.teamId
+);
+
+const orchestrator = new AutomationOrchestrator(db, config, monday, workflowAgent, heroku);
 orchestrator.start();
 const publicDir = path.resolve(process.cwd(), "public");
 

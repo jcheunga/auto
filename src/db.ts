@@ -25,6 +25,7 @@ interface WorkItemRow {
   github_pr_url: string | null;
   github_pr_head_sha: string | null;
   heroku_app_url: string | null;
+  review_app_announced_at: string | null;
   last_error: string | null;
   created_at: string;
   updated_at: string;
@@ -123,10 +124,11 @@ export class AppDb {
         github_pr_url,
         github_pr_head_sha,
         heroku_app_url,
+        review_app_announced_at,
         last_error,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)`
     );
 
     stmt.run(input.mondayItemId, input.boardId, input.title, input.description, status, now, now);
@@ -155,6 +157,7 @@ export class AppDb {
         githubPrUrl: "github_pr_url",
         githubPrHeadSha: "github_pr_head_sha",
         herokuAppUrl: "heroku_app_url",
+        reviewAppAnnouncedAt: "review_app_announced_at",
         lastError: "last_error"
       };
       return mapping[key];
@@ -515,6 +518,7 @@ export class AppDb {
         github_pr_url TEXT,
         github_pr_head_sha TEXT,
         heroku_app_url TEXT,
+        review_app_announced_at TEXT,
         last_error TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -579,6 +583,7 @@ export class AppDb {
     this.ensureColumn("work_items", "github_owner", "TEXT");
     this.ensureColumn("work_items", "github_repo", "TEXT");
     this.ensureColumn("work_items", "github_base_branch", "TEXT");
+    this.ensureColumn("work_items", "review_app_announced_at", "TEXT");
   }
 
   private ensureColumn(tableName: string, columnName: string, typeSql: string): void {
@@ -608,6 +613,7 @@ function mapWorkItemRow(row: WorkItemRow): WorkItem {
     githubPrUrl: row.github_pr_url,
     githubPrHeadSha: row.github_pr_head_sha,
     herokuAppUrl: row.heroku_app_url,
+    reviewAppAnnouncedAt: row.review_app_announced_at,
     lastError: row.last_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at

@@ -7,7 +7,9 @@ This service automates a Monday workflow:
 3. It hands that context to a workflow agent command (Claude Code or another CLI).
 4. Claude decides whether to create a branch/PR, revise an existing branch, reply on Monday, or no-op.
 5. Claude uses `gh` for GitHub work and Monday MCP for Monday follow-up updates.
-6. When the Monday status is set to `Approved`, it marks the item ready and asks for manual merge.
+6. When a PR exists and Heroku is configured, the service creates the review app deterministically.
+7. The service then calls Claude again so Claude can post the review-app URL back to Monday via MCP.
+8. When the Monday status is set to `Approved`, it marks the item ready and asks for manual merge.
 
 ## Architecture
 
@@ -15,7 +17,8 @@ This service automates a Monday workflow:
 - `src/orchestrator.ts`: workflow state machine + worker scheduler.
 - `src/integrations/monday.ts`: Monday GraphQL client.
 - `src/integrations/github.ts`: GitHub CLI-backed client via `gh`.
-- `src/integrations/workflowAgent.ts`: Claude-driven orchestration runner.
+- `src/integrations/workflowAgent.ts`: Claude-driven orchestration runner and review-app follow-up callback.
+- `src/integrations/heroku.ts`: Heroku review-app creation client.
 - `src/db.ts`: SQLite persistence for item/PR mapping and durable event queue.
 
 ## Prerequisites
@@ -65,7 +68,7 @@ The service delegates workflow decisions to this command. It sets these env vars
 - `WORK_PROMPT`: full orchestration prompt
 - `WORK_CONTEXT_FILE`: JSON file with the Monday item, full thread, current DB state, and defaults
 - `WORK_RESULT_FILE`: path where the agent must write a JSON result
-- `AUTOMATION_MODE`: always `orchestrate`
+- `AUTOMATION_MODE`: `orchestrate` for PR work, `review_app_followup` for the Monday postback after Heroku succeeds
 - `GITHUB_TOKEN`: passed through for `gh` CLI access
 
 Example:
@@ -80,6 +83,14 @@ The intended Claude behavior is:
 - decide `create_pr`, `revise_pr`, `reply_only`, or `noop`
 - use `gh` for GitHub operations
 - use Monday MCP for Monday follow-up updates
+- do not create Heroku review apps during the main orchestration step
+- write a JSON result to `WORK_RESULT_FILE`
+
+When `AUTOMATION_MODE=review_app_followup`, Claude should:
+
+- read `WORK_CONTEXT_FILE`
+- post the provided review-app URL back to Monday via MCP
+- avoid GitHub and Heroku mutations
 - write a JSON result to `WORK_RESULT_FILE`
 
 ## Multi-repo routing
@@ -107,7 +118,7 @@ npm run dev
 The app expects `gh` to be installed and uses `GITHUB_TOKEN` for both:
 - `gh api` calls for PR creation/comments
 - git HTTPS auth via `gh auth git-credential`
-- The Claude environment should also have Monday MCP configured if you want the agent to post updates directly back to Monday.
+- The Claude environment should also have Monday MCP configured because Claude is responsible for posting follow-up replies, including the review-app link after the service creates it.
 
 Health check:
 
@@ -183,6 +194,7 @@ open http://localhost:1337/dashboard
 
 - `create_item` / `create_pulse`: creates a local work-item record and waits for prompt updates.
 - `create_update` / `new_update`:
-  - If no PR exists yet: treats update body as the task prompt, creates branch + PR + optional review app.
+  - If no PR exists yet: treats update body as the task prompt, creates branch + PR.
   - If PR already exists: treats update body as feedback, runs revision cycle, pushes commit.
+  - If Heroku is configured and a PR/branch exists without a tracked review app, the service creates the review app and then asks Claude to post the URL back to Monday.
 - `change_column_value`: if webhook status label equals `MONDAY_STATUS_APPROVED_LABEL`, posts a manual-merge reminder.

@@ -20,6 +20,7 @@ export interface WorkItem {
   githubPrUrl: string | null;
   githubPrHeadSha: string | null;
   herokuAppUrl: string | null;
+  reviewAppAnnouncedAt: string | null;
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
@@ -37,6 +38,7 @@ export interface WorkItemUpdate {
   githubPrUrl?: string | null;
   githubPrHeadSha?: string | null;
   herokuAppUrl?: string | null;
+  reviewAppAnnouncedAt?: string | null;
   lastError?: string | null;
 }
 
@@ -121,6 +123,39 @@ export interface WorkflowAgentContext {
   automationTag: string;
 }
 
+export interface WorkflowAgentReviewAppContext {
+  item: {
+    mondayItemId: string;
+    boardId: string;
+    title: string;
+  };
+  event: {
+    eventId: string;
+    type: string;
+    commentBody: string;
+    statusLabel: string | null;
+    boardId: string | null;
+    columnId: string | null;
+  };
+  existingWorkItem: WorkItem;
+  thread: MondayThreadEntry[];
+  repository: {
+    owner: string;
+    repo: string;
+    baseBranch: string;
+    branch: string;
+  };
+  pullRequest: {
+    number: number | null;
+    url: string | null;
+    headSha: string | null;
+  };
+  reviewApp: {
+    url: string;
+  };
+  automationTag: string;
+}
+
 export type WorkflowAgentDecision =
   | "create_pr"
   | "revise_pr"
@@ -149,5 +184,11 @@ export interface WorkflowAgentResult {
     postedUpdate?: boolean;
     updateSummary?: string;
   };
+  metadata?: Record<string, unknown>;
+}
+
+export interface WorkflowAgentAnnouncementResult {
+  postedUpdate: boolean;
+  updateSummary: string;
   metadata?: Record<string, unknown>;
 }

@@ -1,11 +1,16 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { z } from "zod";
+import { ZodType, z } from "zod";
 import { appLogger } from "../lib/appLogger";
 import { serializeError } from "../lib/logger";
 import { runCommand } from "../lib/shell";
-import { WorkflowAgentContext, WorkflowAgentResult } from "../types";
+import {
+  WorkflowAgentAnnouncementResult,
+  WorkflowAgentContext,
+  WorkflowAgentResult,
+  WorkflowAgentReviewAppContext
+} from "../types";
 
 const workflowAgentResultSchema = z.object({
   decision: z.enum(["create_pr", "revise_pr", "reply_only", "noop", "error"]),
@@ -39,8 +44,17 @@ const workflowAgentResultSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional()
 });
 
+const workflowAgentAnnouncementResultSchema = z.object({
+  postedUpdate: z.boolean(),
+  updateSummary: z.string().min(1),
+  metadata: z.record(z.string(), z.unknown()).optional()
+});
+
 export interface WorkflowAgent {
   run(context: WorkflowAgentContext): Promise<WorkflowAgentResult>;
+  announceReviewApp(
+    context: WorkflowAgentReviewAppContext
+  ): Promise<WorkflowAgentAnnouncementResult>;
 }
 
 interface ClaudeWorkflowAgentConfig {
@@ -54,6 +68,34 @@ export class ClaudeWorkflowAgent implements WorkflowAgent {
   constructor(private readonly cfg: ClaudeWorkflowAgentConfig) {}
 
   async run(context: WorkflowAgentContext): Promise<WorkflowAgentResult> {
+    return this.runAgentCommand({
+      mode: "orchestrate",
+      itemId: context.item.mondayItemId,
+      payload: context,
+      schema: workflowAgentResultSchema,
+      promptBuilder: buildWorkflowPrompt
+    });
+  }
+
+  async announceReviewApp(
+    context: WorkflowAgentReviewAppContext
+  ): Promise<WorkflowAgentAnnouncementResult> {
+    return this.runAgentCommand({
+      mode: "review_app_followup",
+      itemId: context.item.mondayItemId,
+      payload: context,
+      schema: workflowAgentAnnouncementResultSchema,
+      promptBuilder: buildReviewAppAnnouncementPrompt
+    });
+  }
+
+  private async runAgentCommand<TPayload extends object, TResult>(input: {
+    mode: string;
+    itemId: string;
+    payload: TPayload;
+    schema: ZodType<TResult>;
+    promptBuilder: (payload: TPayload, contextFile: string, resultFile: string) => string;
+  }): Promise<TResult> {
     if (!this.cfg.command) {
       throw new Error("CODE_AGENT_COMMAND is required for Claude-driven orchestration");
     }
@@ -61,14 +103,15 @@ export class ClaudeWorkflowAgent implements WorkflowAgent {
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "workflow-agent-"));
     const contextFile = path.join(workspace, "context.json");
     const resultFile = path.join(workspace, "result.json");
-    const prompt = buildWorkflowPrompt(context, contextFile, resultFile);
+    const prompt = input.promptBuilder(input.payload, contextFile, resultFile);
     const startedAt = Date.now();
 
     try {
-      await fs.writeFile(contextFile, JSON.stringify(context, null, 2), "utf8");
+      await fs.writeFile(contextFile, JSON.stringify(input.payload, null, 2), "utf8");
 
       this.logger.info("Running workflow agent", {
-        itemId: context.item.mondayItemId,
+        itemId: input.itemId,
+        mode: input.mode,
         command: commandLabel(this.cfg.command),
         workspace
       });
@@ -80,7 +123,7 @@ export class ClaudeWorkflowAgent implements WorkflowAgent {
           GITHUB_TOKEN: this.cfg.githubToken,
           GH_TOKEN: this.cfg.githubToken,
           GIT_TERMINAL_PROMPT: "0",
-          AUTOMATION_MODE: "orchestrate",
+          AUTOMATION_MODE: input.mode,
           WORK_CONTEXT_FILE: contextFile,
           WORK_RESULT_FILE: resultFile,
           WORK_PROMPT: prompt
@@ -88,18 +131,19 @@ export class ClaudeWorkflowAgent implements WorkflowAgent {
       });
 
       const rawResult = await fs.readFile(resultFile, "utf8");
-      const parsed = workflowAgentResultSchema.parse(JSON.parse(rawResult));
+      const parsed = input.schema.parse(JSON.parse(rawResult));
 
       this.logger.info("Workflow agent completed", {
-        itemId: context.item.mondayItemId,
-        decision: parsed.decision,
+        itemId: input.itemId,
+        mode: input.mode,
         durationMs: Date.now() - startedAt
       });
 
       return parsed;
     } catch (error) {
       this.logger.error("Workflow agent failed", {
-        itemId: context.item.mondayItemId,
+        itemId: input.itemId,
+        mode: input.mode,
         durationMs: Date.now() - startedAt,
         ...serializeError(error)
       });
@@ -127,6 +171,8 @@ function buildWorkflowPrompt(
     `  ${contextFile}`,
     "- Use gh CLI for repository, branch, commit, push, and PR operations.",
     "- Use Monday MCP for any Monday follow-up updates or clarifying replies.",
+    "- Do not create or manage Heroku review apps in this step. The automation service handles review-app creation separately.",
+    "- If a review app becomes available later, you may be called again to post that URL back to Monday.",
     `- If you post to Monday, prefix the update with ${context.automationTag}.`,
     "- Prefer revising the existing tracked branch/PR when one already exists.",
     "- If no branch/PR exists yet, create one.",
@@ -181,6 +227,56 @@ function buildWorkflowPrompt(
     `- Default base branch: ${context.defaults.githubBaseBranch}`,
     `- Repo hint: ${context.hints.repoHint ?? "none"}`,
     `- Base branch hint: ${context.hints.baseBranchHint ?? "none"}`
+  ].join("\n");
+}
+
+function buildReviewAppAnnouncementPrompt(
+  context: WorkflowAgentReviewAppContext,
+  contextFile: string,
+  resultFile: string
+): string {
+  return [
+    "You are the Monday follow-up agent for a Monday -> GitHub -> Heroku automation.",
+    "",
+    "Primary goal:",
+    "- Post the newly created Heroku review-app URL back to the Monday item.",
+    "",
+    "Operational rules:",
+    "- Read the full context JSON from this file:",
+    `  ${contextFile}`,
+    "- Use Monday MCP to post a concise update that includes the review-app URL.",
+    `- Prefix the Monday update with ${context.automationTag}.`,
+    "- Mention the pull request URL if it is available.",
+    "- Do not create or modify branches, pull requests, or Heroku apps in this step.",
+    "- Do not guess: if you cannot post to Monday, write a failure result instead of pretending it succeeded.",
+    "- Do not print the final result to stdout only. You must write a JSON file.",
+    "",
+    "Write the final machine-readable result to this exact file path:",
+    `  ${resultFile}`,
+    "",
+    "JSON schema:",
+    JSON.stringify(
+      {
+        postedUpdate: true,
+        updateSummary: "short plain-English summary of the Monday reply",
+        metadata: {
+          notes: "optional extra metadata"
+        }
+      },
+      null,
+      2
+    ),
+    "",
+    "Always write valid JSON to the result file.",
+    "",
+    "Current item summary:",
+    `- Monday item: ${context.item.mondayItemId}`,
+    `- Title: ${context.item.title}`,
+    `- Board: ${context.item.boardId}`,
+    `- Existing PR: ${context.pullRequest.url ?? context.pullRequest.number ?? "none"}`,
+    `- Review app URL: ${context.reviewApp.url}`,
+    `- Repository: ${context.repository.owner}/${context.repository.repo}`,
+    `- Branch: ${context.repository.branch}`
   ].join("\n");
 }
 

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { AppConfig } from "./config";
 import { AppDb } from "./db";
+import { HerokuClient } from "./integrations/heroku";
 import { MondayClient } from "./integrations/monday";
 import { WorkflowAgent } from "./integrations/workflowAgent";
 import {
@@ -44,7 +45,8 @@ export class AutomationOrchestrator {
     private readonly db: AppDb,
     private readonly config: AppConfig,
     private readonly monday: MondayClient,
-    private readonly workflowAgent: WorkflowAgent
+    private readonly workflowAgent: WorkflowAgent,
+    private readonly heroku: HerokuClient
   ) {}
 
   start(): void {
@@ -421,7 +423,14 @@ export class AutomationOrchestrator {
 
     try {
       const result = await this.workflowAgent.run(agentContext);
-      this.applyWorkflowAgentResult(event.itemId, mondayContext.title, cleanedPrompt, result);
+      let updatedWorkItem = this.applyWorkflowAgentResult(
+        event.itemId,
+        mondayContext.title,
+        cleanedPrompt,
+        result
+      );
+
+      updatedWorkItem = await this.ensureReviewAppLifecycle(agentContext, updatedWorkItem);
 
       this.recordAction({
         actionType: "item.agent.completed",
@@ -464,13 +473,13 @@ export class AutomationOrchestrator {
     title: string,
     description: string,
     result: WorkflowAgentResult
-  ): void {
+  ): WorkItem {
     const current = this.db.getWorkItem(itemId);
     if (!current) {
       throw new Error(`Work item ${itemId} not found while applying workflow agent result`);
     }
 
-    this.db.updateWorkItem(itemId, {
+    return this.db.updateWorkItem(itemId, {
       title,
       description,
       status: deriveStatusFromWorkflowResult(current, result),
@@ -486,8 +495,156 @@ export class AutomationOrchestrator {
       githubPrHeadSha: result.pullRequest?.headSha ?? current.githubPrHeadSha,
       herokuAppUrl:
         result.reviewApp?.url !== undefined ? result.reviewApp.url ?? null : current.herokuAppUrl,
+      reviewAppAnnouncedAt:
+        result.reviewApp?.url && result.monday?.postedUpdate
+          ? new Date().toISOString()
+          : current.reviewAppAnnouncedAt,
       lastError: result.decision === "error" ? result.summary : null
     });
+  }
+
+  private async ensureReviewAppLifecycle(
+    agentContext: WorkflowAgentContext,
+    workItem: WorkItem
+  ): Promise<WorkItem> {
+    let updatedWorkItem = workItem;
+
+    if (
+      !updatedWorkItem.herokuAppUrl &&
+      updatedWorkItem.githubPrNumber &&
+      updatedWorkItem.workBranch &&
+      updatedWorkItem.githubOwner &&
+      updatedWorkItem.githubRepo
+    ) {
+      if (!this.heroku.isConfigured()) {
+        this.recordAction({
+          level: "warn",
+          actionType: "item.review_app.skipped",
+          itemId: updatedWorkItem.mondayItemId,
+          eventId: agentContext.event.eventId,
+          message: "Review app creation skipped because Heroku is not configured",
+          metadata: {
+            githubOwner: updatedWorkItem.githubOwner,
+            githubRepo: updatedWorkItem.githubRepo,
+            branch: updatedWorkItem.workBranch,
+            prNumber: updatedWorkItem.githubPrNumber
+          }
+        });
+      } else {
+        this.recordAction({
+          actionType: "item.review_app.creating",
+          itemId: updatedWorkItem.mondayItemId,
+          eventId: agentContext.event.eventId,
+          message: "Creating Heroku review app",
+          metadata: {
+            githubOwner: updatedWorkItem.githubOwner,
+            githubRepo: updatedWorkItem.githubRepo,
+            branch: updatedWorkItem.workBranch,
+            prNumber: updatedWorkItem.githubPrNumber
+          }
+        });
+
+        const reviewAppUrl = await this.heroku.createReviewApp({
+          branch: updatedWorkItem.workBranch,
+          pullRequestNumber: updatedWorkItem.githubPrNumber,
+          sourceRepoUrl: `https://github.com/${updatedWorkItem.githubOwner}/${updatedWorkItem.githubRepo}`
+        });
+
+        if (reviewAppUrl) {
+          updatedWorkItem = this.db.updateWorkItem(updatedWorkItem.mondayItemId, {
+            herokuAppUrl: reviewAppUrl,
+            reviewAppAnnouncedAt: null
+          });
+          this.recordAction({
+            actionType: "item.review_app.created",
+            itemId: updatedWorkItem.mondayItemId,
+            eventId: agentContext.event.eventId,
+            message: "Heroku review app created",
+            metadata: {
+              reviewAppUrl
+            }
+          });
+        } else {
+          this.recordAction({
+            level: "warn",
+            actionType: "item.review_app.unavailable",
+            itemId: updatedWorkItem.mondayItemId,
+            eventId: agentContext.event.eventId,
+            message: "Heroku review app was requested but no URL was resolved",
+            metadata: {
+              githubOwner: updatedWorkItem.githubOwner,
+              githubRepo: updatedWorkItem.githubRepo,
+              branch: updatedWorkItem.workBranch,
+              prNumber: updatedWorkItem.githubPrNumber
+            }
+          });
+        }
+      }
+    }
+
+    if (!updatedWorkItem.herokuAppUrl || updatedWorkItem.reviewAppAnnouncedAt) {
+      return updatedWorkItem;
+    }
+
+    const repository = resolveRepositoryForAnnouncement(updatedWorkItem, this.config);
+    if (!repository || !updatedWorkItem.workBranch) {
+      return updatedWorkItem;
+    }
+
+    this.recordAction({
+      actionType: "item.review_app.announcing",
+      itemId: updatedWorkItem.mondayItemId,
+      eventId: agentContext.event.eventId,
+      message: "Delegating Monday review-app update to Claude",
+      metadata: {
+        reviewAppUrl: updatedWorkItem.herokuAppUrl,
+        prUrl: updatedWorkItem.githubPrUrl,
+        branch: updatedWorkItem.workBranch
+      }
+    });
+
+    const announcement = await this.workflowAgent.announceReviewApp({
+      item: agentContext.item,
+      event: agentContext.event,
+      existingWorkItem: updatedWorkItem,
+      thread: agentContext.thread,
+      repository: {
+        ...repository,
+        branch: updatedWorkItem.workBranch
+      },
+      pullRequest: {
+        number: updatedWorkItem.githubPrNumber,
+        url: updatedWorkItem.githubPrUrl,
+        headSha: updatedWorkItem.githubPrHeadSha
+      },
+      reviewApp: {
+        url: updatedWorkItem.herokuAppUrl
+      },
+      automationTag: agentContext.automationTag
+    });
+
+    if (!announcement.postedUpdate) {
+      throw new Error(
+        `Workflow agent did not post the review app update to Monday: ${announcement.updateSummary}`
+      );
+    }
+
+    updatedWorkItem = this.db.updateWorkItem(updatedWorkItem.mondayItemId, {
+      reviewAppAnnouncedAt: new Date().toISOString()
+    });
+
+    this.recordAction({
+      actionType: "item.review_app.announced",
+      itemId: updatedWorkItem.mondayItemId,
+      eventId: agentContext.event.eventId,
+      message: announcement.updateSummary,
+      metadata: {
+        reviewAppUrl: updatedWorkItem.herokuAppUrl,
+        ...announcement.metadata
+      }
+    });
+
+    return updatedWorkItem;
   }
 
   private async ensureWorkItemExists(itemId: string): Promise<void> {
@@ -701,6 +858,21 @@ function stripRoutingDirectives(taskUpdate: string): string {
 
   const stripped = strippedLines.join("\n").trim();
   return stripped || taskUpdate.trim();
+}
+
+function resolveRepositoryForAnnouncement(
+  item: WorkItem,
+  config: AppConfig
+): { owner: string; repo: string; baseBranch: string } | null {
+  const owner = item.githubOwner ?? config.github.owner;
+  const repo = item.githubRepo ?? config.github.repo;
+  const baseBranch = item.githubBaseBranch ?? config.github.baseBranch;
+
+  if (!owner || !repo || !baseBranch) {
+    return null;
+  }
+
+  return { owner, repo, baseBranch };
 }
 
 export function describeWorkItem(item: WorkItem): string {
