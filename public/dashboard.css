@@ -127,6 +127,50 @@ h2 {
   cursor: not-allowed;
 }
 
+.hero-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.btn-secondary {
+  background: rgba(12, 137, 104, 0.08);
+  border-color: rgba(12, 137, 104, 0.28);
+}
+
+.work-item-controls {
+  display: grid;
+  gap: 8px;
+  min-width: 18rem;
+}
+
+.control-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.control-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.control-input {
+  width: 100%;
+  border: 1px solid rgba(23, 38, 54, 0.18);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 7px 9px;
+  font: inherit;
+}
+
+.control-input:focus {
+  outline: 2px solid rgba(15, 95, 168, 0.35);
+  border-color: rgba(15, 95, 168, 0.35);
+}
+
 .cards {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
