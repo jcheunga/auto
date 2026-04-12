@@ -15,6 +15,14 @@ interface MondayBasicItemQueryData {
   }>;
 }
 
+interface MondayBoardQueryData {
+  boards: Array<{
+    id: string;
+    name: string;
+    description: string | null;
+  }>;
+}
+
 interface MondayItemContextQueryData {
   items: Array<{
     id: string;
@@ -50,6 +58,8 @@ export interface MondayItemBasics {
 }
 
 export interface MondayItemContext extends MondayItemBasics {
+  boardName: string | null;
+  boardDescription: string | null;
   thread: MondayThreadEntry[];
 }
 
@@ -93,6 +103,43 @@ export class MondayClient {
       itemId: item.id,
       boardId: item.board.id,
       title: item.name
+    };
+  }
+
+  async getBoardContext(boardId: string): Promise<{
+    boardName: string | null;
+    boardDescription: string | null;
+  }> {
+    this.logger.info("Fetching Monday board context", { boardId });
+
+    const query = `
+      query ($boardId: [ID!]) {
+        boards(ids: $boardId) {
+          id
+          name
+          description
+        }
+      }
+    `;
+
+    const result = await this.graphql<MondayBoardQueryData>(query, { boardId: [boardId] });
+    const board = result.boards[0];
+    if (!board) {
+      this.logger.warn("Monday board not found", { boardId });
+      return {
+        boardName: null,
+        boardDescription: null
+      };
+    }
+
+    this.logger.info("Fetched Monday board context", {
+      boardId,
+      boardName: board.name
+    });
+
+    return {
+      boardName: board.name,
+      boardDescription: board.description
     };
   }
 
@@ -163,6 +210,8 @@ export class MondayClient {
       throw new Error(`Monday item ${itemId} not found`);
     }
 
+    const boardContext = await this.getBoardContext(item.board.id);
+
     const thread = item.updates.flatMap<MondayThreadEntry>((update) => {
       const updateEntry: MondayThreadEntry = {
         id: update.id,
@@ -202,6 +251,8 @@ export class MondayClient {
       itemId: item.id,
       boardId: item.board.id,
       title: item.name,
+      boardName: boardContext.boardName,
+      boardDescription: boardContext.boardDescription,
       thread
     };
   }
@@ -256,7 +307,7 @@ export class MondayClient {
 }
 
 function inferOperationName(query: string): string {
-  const match = query.match(/\b(query|mutation)\s*(\w+)?/i);
+  const match = query.match(/(query|mutation)\s*(\w+)?/i);
   if (match?.[2]) {
     return match[2];
   }
