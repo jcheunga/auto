@@ -1,4 +1,5 @@
 const refreshBtn = document.getElementById("refresh-btn");
+const cleanupBtn = document.getElementById("cleanup-btn");
 const lastRefreshEl = document.getElementById("last-refresh");
 
 const summaryCards = document.getElementById("summary-cards");
@@ -86,7 +87,7 @@ function renderQueue(jobs) {
 
 function renderWorkItems(items) {
   if (items.length === 0) {
-    itemsTable.innerHTML = `<tr><td colspan="6" class="muted">No work items yet.</td></tr>`;
+    itemsTable.innerHTML = `<tr><td colspan="7" class="muted">No work items yet.</td></tr>`;
     return;
   }
 
@@ -95,7 +96,9 @@ function renderWorkItems(items) {
       const repo = item.githubOwner && item.githubRepo ? `${item.githubOwner}/${item.githubRepo}` : "-";
       const pr = item.githubPrUrl
         ? `<a href="${escapeHtml(item.githubPrUrl)}" target="_blank" rel="noreferrer">${item.githubPrNumber}</a>`
-        : "-";
+        : item.githubPrNumber
+          ? `#${escapeHtml(item.githubPrNumber)}`
+          : "-";
 
       return `
       <tr>
@@ -105,6 +108,19 @@ function renderWorkItems(items) {
         <td><code>${escapeHtml(item.workBranch || "-")}</code></td>
         <td>${pr}</td>
         <td>${formatDate(item.updatedAt)}</td>
+        <td>
+          <div class="work-item-controls" data-item-id="${escapeHtml(item.mondayItemId)}">
+            <select data-field="status" class="control-input">${statusOptions(item.status)}</select>
+            <div class="control-grid">
+              <input data-field="workBranch" class="control-input" placeholder="branch" value="${escapeHtml(item.workBranch || "")}" />
+              <input data-field="githubPrNumber" class="control-input" placeholder="PR #" inputmode="numeric" value="${escapeHtml(item.githubPrNumber || "")}" />
+              <input data-field="githubPrUrl" class="control-input" placeholder="PR URL" value="${escapeHtml(item.githubPrUrl || "")}" />
+            </div>
+            <div class="control-actions">
+              <button type="button" class="inline-btn" data-save-item="${escapeHtml(item.mondayItemId)}">Save</button>
+            </div>
+          </div>
+        </td>
       </tr>
       `;
     })
@@ -188,6 +204,14 @@ function replayButton(id) {
   return `<button class="inline-btn" data-replay-id="${id}">Replay</button>`;
 }
 
+function statusOptions(current) {
+  const statuses = ["new", "processing", "pr_open", "ready_to_merge", "awaiting_changes", "error"];
+  const normalized = String(current || "");
+  return statuses
+    .map((status) => `<option value="${status}"${status === normalized ? " selected" : ""}>${status}</option>`)
+    .join("");
+}
+
 function statusBadge(value) {
   const text = String(value || "-");
   const normalized = text.toLowerCase();
@@ -233,7 +257,15 @@ function escapeHtml(value) {
 }
 
 async function fetchJson(url, options = {}) {
-  const response = await fetch(url, options);
+  const headers = new Headers(options.headers || {});
+  if (options.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const response = await fetch(url, {
+    ...options,
+    headers
+  });
   if (!response.ok) {
     throw new Error(`${url} -> ${response.status}`);
   }
@@ -245,13 +277,61 @@ async function replayWebhook(eventId) {
   await loadDashboard();
 }
 
+async function saveWorkItem(itemId, payload) {
+  await fetchJson(`/api/dashboard/work-items/${encodeURIComponent(itemId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+  await loadDashboard();
+}
+
+async function cleanupWorktrees() {
+  const result = await fetchJson("/api/admin/worktrees/cleanup", {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+  lastRefreshEl.textContent = `Cleanup removed ${result.worktreesRemoved || 0} worktrees across ${result.reposScanned || 0} repos.`;
+  await loadDashboard();
+}
+
 refreshBtn.addEventListener("click", () => {
   void loadDashboard();
+});
+
+cleanupBtn?.addEventListener("click", () => {
+  cleanupBtn.setAttribute("disabled", "true");
+  void cleanupWorktrees().catch((error) => {
+    lastRefreshEl.textContent = `Cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
+  }).finally(() => {
+    cleanupBtn.removeAttribute("disabled");
+  });
 });
 
 document.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  const saveItemId = target.getAttribute("data-save-item");
+  if (saveItemId) {
+    const controls = target.closest("[data-item-id]");
+    if (!(controls instanceof HTMLElement)) {
+      return;
+    }
+
+    const payload = {
+      status: controls.querySelector('[data-field="status"]')?.value || null,
+      workBranch: controls.querySelector('[data-field="workBranch"]')?.value || null,
+      githubPrNumber: controls.querySelector('[data-field="githubPrNumber"]')?.value || null,
+      githubPrUrl: controls.querySelector('[data-field="githubPrUrl"]')?.value || null
+    };
+
+    target.setAttribute("disabled", "true");
+    void saveWorkItem(saveItemId, payload).catch((error) => {
+      lastRefreshEl.textContent = `Save failed: ${error instanceof Error ? error.message : String(error)}`;
+      target.removeAttribute("disabled");
+    });
     return;
   }
 
