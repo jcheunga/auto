@@ -177,3 +177,82 @@ test("HTTP routes replay stored webhooks and accept Monday challenges", async ()
     db.close();
   }
 });
+
+test("HTTP routes reject invalid dashboard and webhook inputs", async () => {
+  const db = createDb();
+  try {
+    let cleanupCalls = 0;
+    let webhookCalls = 0;
+    const app = createApp({
+      db,
+      config: { monday: { signingSecret: "secret" } },
+      orchestrator: {
+        getRuntimeStats: () => ({ running: false, activeWorkers: 0, lockedItemIds: [] }),
+        handleMondayWebhook: async () => {
+          webhookCalls += 1;
+          return { queueStatus: "accepted", event: { eventId: "evt-1", itemId: "item-1", eventType: "create_update" } };
+        }
+      },
+      workflowAgent: {
+        cleanupWorktrees: async () => {
+          cleanupCalls += 1;
+          throw new Error("boom");
+        }
+      }
+    });
+
+    db.createWorkItem({
+      mondayItemId: "item-1",
+      boardId: "board-1",
+      title: "Title",
+      description: "Description",
+      status: "new"
+    });
+
+    await withServer(app, async (baseUrl) => {
+      const invalidStatus = await fetch(`${baseUrl}/api/dashboard/work-items/item-1`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "not-a-status" })
+      });
+      assert.equal(invalidStatus.status, 400);
+
+      const missingItem = await fetch(`${baseUrl}/api/dashboard/work-items/missing-item`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: "Nope" })
+      });
+      assert.equal(missingItem.status, 404);
+
+      const invalidReplayId = await fetch(`${baseUrl}/api/dashboard/webhooks/abc/replay`, {
+        method: "POST"
+      });
+      assert.equal(invalidReplayId.status, 400);
+
+      const missingReplay = await fetch(`${baseUrl}/api/dashboard/webhooks/999/replay`, {
+        method: "POST"
+      });
+      assert.equal(missingReplay.status, 404);
+
+      const cleanupFailure = await fetch(`${baseUrl}/api/admin/worktrees/cleanup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ force: true })
+      });
+      assert.equal(cleanupFailure.status, 500);
+      const cleanupBody = await cleanupFailure.json() as any;
+      assert.equal(cleanupBody.error, "cleanup_failed");
+      assert.equal(cleanupCalls, 1);
+
+      const invalidSignature = await fetch(`${baseUrl}/webhooks/monday`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ event: { type: "create_item", pulseId: 1 } })
+      });
+      assert.equal(invalidSignature.status, 401);
+      assert.equal(webhookCalls, 0);
+    });
+  } finally {
+    db.close();
+  }
+});
