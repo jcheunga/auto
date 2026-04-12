@@ -392,6 +392,53 @@ export class AppDb {
     }));
   }
 
+  listDuplicateWebhookEvents(limit = 100): WebhookEventLog[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM webhook_events WHERE queue_status = 'duplicate' ORDER BY id DESC LIMIT ?`)
+      .all(limit) as WebhookEventRow[];
+
+    return rows.map((row) => ({
+      id: row.id,
+      source: row.source,
+      eventId: row.event_id,
+      itemId: row.item_id,
+      eventType: row.event_type,
+      signatureValid:
+        row.signature_valid === null ? null : row.signature_valid === 1 ? true : false,
+      queueStatus: row.queue_status,
+      httpStatus: row.http_status,
+      payloadJson: row.payload_json,
+      createdAt: row.created_at
+    }));
+  }
+
+  getWebhookEventById(id: number): { event: WebhookEventLog; payload: unknown } | null {
+    const row = this.db
+      .prepare(`SELECT * FROM webhook_events WHERE id = ?`)
+      .get(id) as WebhookEventRow | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      event: {
+        id: row.id,
+        source: row.source,
+        eventId: row.event_id,
+        itemId: row.item_id,
+        eventType: row.event_type,
+        signatureValid:
+          row.signature_valid === null ? null : row.signature_valid === 1 ? true : false,
+        queueStatus: row.queue_status,
+        httpStatus: row.http_status,
+        payloadJson: row.payload_json,
+        createdAt: row.created_at
+      },
+      payload: JSON.parse(row.payload_json)
+    };
+  }
+
   logAction(input: {
     level?: "info" | "warn" | "error";
     actionType: string;
