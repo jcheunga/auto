@@ -11,6 +11,12 @@ import {
   MondayNormalizedEvent,
   normalizeMondayWebhook
 } from "./lib/mondayEvents";
+import {
+  deriveSuggestedBranch,
+  mergeRoutingDirectives,
+  parseRepoHint,
+  parseRoutingDirectives
+} from "./lib/routing";
 import { appLogger } from "./lib/appLogger";
 import { serializeError } from "./lib/logger";
 import {
@@ -358,8 +364,20 @@ export class AutomationOrchestrator {
 
     const mondayContext = await this.monday.getItemContext(event.itemId);
     const existing = this.db.getWorkItem(event.itemId);
-    const routingHint = parseRoutingHint(event.commentBody);
+    const boardRouting = parseRoutingDirectives(
+      [mondayContext.boardName, mondayContext.boardDescription].filter(Boolean).join("
+")
+    );
+    const commentRouting = parseRoutingDirectives(event.commentBody);
+    const routingHint = mergeRoutingDirectives(boardRouting, commentRouting);
     const cleanedPrompt = stripRoutingDirectives(event.commentBody);
+    const suggestedBranch = deriveSuggestedBranch({
+      title: mondayContext.title,
+      itemId: event.itemId,
+      boardName: mondayContext.boardName,
+      repoHint: routingHint.repoHint
+    });
+    const resolvedRepo = resolveRepositoryDefaults(routingHint, this.config);
 
     if (!existing) {
       this.db.createWorkItem({
@@ -376,9 +394,12 @@ export class AutomationOrchestrator {
       });
     }
 
-    this.db.updateWorkItem(event.itemId, {
+    const routedWorkItem = this.db.updateWorkItem(event.itemId, {
       status: "processing",
-      lastError: null
+      lastError: null,
+      githubOwner: resolvedRepo.owner,
+      githubRepo: resolvedRepo.repo,
+      githubBaseBranch: resolvedRepo.baseBranch
     });
 
     const agentContext: WorkflowAgentContext = {
@@ -386,6 +407,10 @@ export class AutomationOrchestrator {
         mondayItemId: event.itemId,
         boardId: mondayContext.boardId,
         title: mondayContext.title
+      },
+      board: {
+        name: mondayContext.boardName,
+        description: mondayContext.boardDescription
       },
       event: {
         eventId: event.eventId,
@@ -395,13 +420,15 @@ export class AutomationOrchestrator {
         boardId: event.boardId,
         columnId: event.columnId
       },
-      existingWorkItem: this.db.getWorkItem(event.itemId),
+      existingWorkItem: routedWorkItem,
       thread: mondayContext.thread,
       defaults: {
-        githubOwner: this.config.github.owner,
-        githubRepo: this.config.github.repo,
-        githubBaseBranch: this.config.github.baseBranch
+        githubOwner: resolvedRepo.owner,
+        githubRepo: resolvedRepo.repo,
+        githubBaseBranch: resolvedRepo.baseBranch
       },
+      routing: routingHint,
+      suggestedBranch,
       hints: routingHint,
       automationTag: AUTOMATION_TAG
     };
@@ -417,6 +444,9 @@ export class AutomationOrchestrator {
         existingPrNumber: agentContext.existingWorkItem?.githubPrNumber,
         repoHint: routingHint.repoHint,
         baseBranchHint: routingHint.baseBranchHint,
+        branchHint: routingHint.branchHint,
+        suggestedBranch,
+        boardName: mondayContext.boardName,
         threadEntries: mondayContext.thread.length
       }
     });
@@ -825,6 +855,18 @@ function deriveStatusFromWorkflowResult(
   }
 
   return current.status;
+}
+
+function resolveRepositoryDefaults(
+  routing: { repoHint?: string; baseBranchHint?: string; branchHint?: string },
+  config: AppConfig
+): { owner: string; repo: string; baseBranch: string } {
+  const repo = parseRepoHint(routing.repoHint);
+  return {
+    owner: repo?.owner ?? config.github.owner,
+    repo: repo?.repo ?? config.github.repo,
+    baseBranch: routing.baseBranchHint ?? config.github.baseBranch
+  };
 }
 
 function parseRoutingHint(taskUpdate: string): {
