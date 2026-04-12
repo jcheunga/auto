@@ -90,6 +90,12 @@ export interface RoutingDirectives {
   branchHint?: string;
 }
 
+export interface MondayItemBasics {
+  itemId: string;
+  boardId: string;
+  title: string;
+}
+
 export interface MondayThreadEntry {
   id: string;
   kind: "update" | "reply";
