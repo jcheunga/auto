@@ -23,7 +23,10 @@
           <h1>Automation Control Tower</h1>
           <p id="last-refresh" class="muted">Loading...</p>
         </div>
-        <button id="refresh-btn" class="btn">Refresh Now</button>
+        <div class="hero-actions">
+          <button id="refresh-btn" class="btn">Refresh Now</button>
+          <button id="cleanup-btn" class="btn btn-secondary">Cleanup Worktrees</button>
+        </div>
       </header>
 
       <section class="cards" id="summary-cards"></section>
@@ -65,6 +68,7 @@
                 <th>Branch</th>
                 <th>PR</th>
                 <th>Updated</th>
+                <th>Controls</th>
               </tr>
             </thead>
             <tbody id="items-table"></tbody>
