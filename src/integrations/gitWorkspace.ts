@@ -28,6 +28,7 @@ export class GitWorkspaceManager {
   private readonly logger = appLogger.child({ component: "git-workspace" });
   private readonly repoLocks = new Map<string, Promise<void>>();
   private readonly branchLocks = new Map<string, Promise<void>>();
+  private readonly lastSweepAtByRepo = new Map<string, number>();
   private askPassPathPromise: Promise<string> | null = null;
 
   constructor(private readonly cfg: GitWorkspaceManagerConfig) {
@@ -56,8 +57,8 @@ export class GitWorkspaceManager {
     });
 
     let worktreeCreated = false;
-    const branchLockKey = repository.branch
-      ? `${repoKey}:${toPathSegment(repository.branch)}`
+    const branchLockKey = (repository.branch ?? context.suggestedBranch)
+      ? `${repoKey}:${toPathSegment(repository.branch ?? context.suggestedBranch)}`
       : null;
     const releaseBranchLock = branchLockKey
       ? await this.acquireLock(this.branchLocks, branchLockKey)
@@ -67,6 +68,7 @@ export class GitWorkspaceManager {
       await this.withRepoLock(repoKey, async () => {
         const gitEnv = await this.buildGitEnv();
         await this.ensureRepoCache(cacheDir, repository, gitEnv);
+        await this.sweepStaleWorktrees(worktreesDir, cacheDir, gitEnv, repoKey);
         await runCommand(`git --git-dir=${shellEscape(cacheDir)} worktree prune`, { env: gitEnv });
 
         const startRef = await this.resolveStartRef(cacheDir, repository, gitEnv);
@@ -222,6 +224,65 @@ export class GitWorkspaceManager {
     });
   }
 
+  private async sweepStaleWorktrees(
+    worktreesDir: string,
+    cacheDir: string,
+    gitEnv: NodeJS.ProcessEnv,
+    repoKey: string
+  ): Promise<void> {
+    const now = Date.now();
+    const lastSweep = this.lastSweepAtByRepo.get(repoKey) ?? 0;
+    const sweepIntervalMs = 30 * 60 * 1000;
+    const staleAfterMs = 7 * 24 * 60 * 60 * 1000;
+
+    if (now - lastSweep < sweepIntervalMs) {
+      return;
+    }
+
+    this.lastSweepAtByRepo.set(repoKey, now);
+
+    let entries: Array<{ path: string }> = [];
+    try {
+      const dirents = await fs.readdir(worktreesDir, { withFileTypes: true });
+      entries = dirents.filter((entry) => entry.isDirectory()).map((entry) => ({
+        path: path.join(worktreesDir, entry.name)
+      }));
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      try {
+        const stat = await fs.stat(entry.path);
+        if (now - stat.mtimeMs < staleAfterMs) {
+          continue;
+        }
+
+        this.logger.info("Removing stale worktree directory", {
+          repoKey,
+          worktreeDir: entry.path,
+          ageHours: Math.round((now - stat.mtimeMs) / (60 * 60 * 1000))
+        });
+        await fs.rm(entry.path, { recursive: true, force: true });
+      } catch (error) {
+        this.logger.warn("Failed to inspect or remove stale worktree", {
+          repoKey,
+          worktreeDir: entry.path,
+          ...serializeError(error)
+        });
+      }
+    }
+
+    try {
+      await runCommand(`git --git-dir=${shellEscape(cacheDir)} worktree prune`, { env: gitEnv });
+    } catch (error) {
+      this.logger.warn("git worktree prune failed during sweep", {
+        cacheDir,
+        ...serializeError(error)
+      });
+    }
+  }
+
   private async buildGitEnv(): Promise<NodeJS.ProcessEnv> {
     const askPassPath = await this.ensureAskPassScript();
 
@@ -303,14 +364,17 @@ function resolveRepositoryTarget(context: WorkflowAgentContext): PreparedGitWork
     branch: context.existingWorkItem?.workBranch ?? null
   };
 
-  const hintedRepo = parseRepoHint(context.hints.repoHint);
+  const hintedRepo = parseRepoHint(context.routing.repoHint ?? context.hints.repoHint);
 
   return {
     owner: fromWorkItem.owner ?? hintedRepo?.owner ?? context.defaults.githubOwner,
     repo: fromWorkItem.repo ?? hintedRepo?.repo ?? context.defaults.githubRepo,
     baseBranch:
-      fromWorkItem.baseBranch ?? context.hints.baseBranchHint ?? context.defaults.githubBaseBranch,
-    branch: fromWorkItem.branch
+      fromWorkItem.baseBranch ??
+      context.routing.baseBranchHint ??
+      context.hints.baseBranchHint ??
+      context.defaults.githubBaseBranch,
+    branch: fromWorkItem.branch ?? context.routing.branchHint ?? context.suggestedBranch
   };
 }
 
