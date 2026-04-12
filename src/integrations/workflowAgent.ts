@@ -113,6 +113,14 @@ export class ClaudeWorkflowAgent implements WorkflowAgent {
     });
   }
 
+  async cleanupWorktrees(options: { owner?: string; repo?: string; force?: boolean } = {}): Promise<{
+    reposScanned: number;
+    worktreesRemoved: number;
+    repoKeys: string[];
+  }> {
+    return this.gitWorkspaceManager.cleanupWorktrees(options);
+  }
+
   private async runAgentCommand<TPayload extends object, TResult>(input: {
     mode: string;
     itemId: string;
