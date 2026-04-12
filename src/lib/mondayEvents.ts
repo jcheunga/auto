@@ -39,6 +39,8 @@ export function normalizeMondayWebhook(payload: unknown): MondayWebhookEnvelope 
 
   const event: MondayNormalizedEvent = {
     eventId:
+      readString(rawEvent, ["__replayEventId"]) ??
+      readString(asRecord, ["__replayEventId"]) ??
       readString(rawEvent, ["eventId"]) ??
       readString(rawEvent, ["event_id"]) ??
       readString(rawEvent, ["id"]) ??
