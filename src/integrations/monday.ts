@@ -1,6 +1,6 @@
 import { appLogger } from "../lib/appLogger";
 import { serializeError } from "../lib/logger";
-import { MondayThreadEntry } from "../types";
+import { MondayColumnValue, MondayThreadEntry } from "../types";
 
 interface MondayGraphqlResponse<TData> {
   data?: TData;
@@ -28,6 +28,12 @@ interface MondayItemContextQueryData {
     id: string;
     name: string;
     board: { id: string };
+    column_values: Array<{
+      id: string;
+      title: string | null;
+      text: string | null;
+      value: string | null;
+    }>;
     updates: Array<{
       id: string;
       body: string | null;
@@ -60,6 +66,7 @@ export interface MondayItemBasics {
 export interface MondayItemContext extends MondayItemBasics {
   boardName: string | null;
   boardDescription: string | null;
+  columnValues: MondayColumnValue[];
   thread: MondayThreadEntry[];
 }
 
@@ -175,6 +182,12 @@ export class MondayClient {
           board {
             id
           }
+          column_values {
+            id
+            title
+            text
+            value
+          }
           updates(limit: $updatesLimit) {
             id
             body
@@ -211,6 +224,13 @@ export class MondayClient {
     }
 
     const boardContext = await this.getBoardContext(item.board.id);
+
+    const columnValues: MondayColumnValue[] = item.column_values.map((column) => ({
+      id: column.id,
+      title: column.title,
+      text: column.text,
+      value: column.value
+    }));
 
     const thread = item.updates.flatMap<MondayThreadEntry>((update) => {
       const updateEntry: MondayThreadEntry = {
@@ -253,6 +273,7 @@ export class MondayClient {
       title: item.name,
       boardName: boardContext.boardName,
       boardDescription: boardContext.boardDescription,
+      columnValues,
       thread
     };
   }
