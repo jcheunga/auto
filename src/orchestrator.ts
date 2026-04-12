@@ -15,7 +15,9 @@ import {
   deriveSuggestedBranch,
   mergeRoutingDirectives,
   parseRepoHint,
-  parseRoutingDirectives
+  parseRoutingDirectives,
+  resolveColumnRouting,
+  stripRoutingDirectives
 } from "./lib/routing";
 import { appLogger } from "./lib/appLogger";
 import { serializeError } from "./lib/logger";
@@ -367,8 +369,13 @@ export class AutomationOrchestrator {
     const boardRouting = parseRoutingDirectives(
       [mondayContext.boardName, mondayContext.boardDescription].filter(Boolean).join("\n")
     );
+    const columnRouting = resolveColumnRouting(
+      boardRouting,
+      mondayContext.columnValues,
+      { statusLabel: event.statusLabel }
+    );
     const commentRouting = parseRoutingDirectives(event.commentBody);
-    const routingHint = mergeRoutingDirectives(boardRouting, commentRouting);
+    const routingHint = mergeRoutingDirectives(boardRouting, columnRouting, commentRouting);
     const cleanedPrompt = stripRoutingDirectives(event.commentBody);
     const suggestedBranch = deriveSuggestedBranch({
       title: mondayContext.title,
@@ -892,14 +899,6 @@ function parseRoutingHint(taskUpdate: string): {
   return result;
 }
 
-function stripRoutingDirectives(taskUpdate: string): string {
-  const strippedLines = taskUpdate
-    .split(/\r?\n/)
-    .filter((line) => !/^\s*(?:@repo|repo:|@base|base:|branch:)\s+/i.test(line));
-
-  const stripped = strippedLines.join("\n").trim();
-  return stripped || taskUpdate.trim();
-}
 
 function resolveRepositoryForAnnouncement(
   item: WorkItem,
