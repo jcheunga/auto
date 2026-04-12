@@ -108,6 +108,10 @@ When `AUTOMATION_MODE=review_app_followup`, Claude should:
 - In the first task update body, you can optionally set:
   - `@repo owner/repo` or `repo: owner/repo`
   - `@base branch-name` or `base: branch-name`
+- Board metadata can also define column-based routing rules such as:
+  - `@column-route team=ios => repo: acme/mobile; base: develop`
+  - `@column-route status=Approved => branch: release/approved`
+- Column routes are matched against Monday item column values and status labels before the workflow agent runs.
 - These directive lines are stripped from the prompt before code generation.
 - Repo/base routing is persisted per item in SQLite so follow-up comment revisions stay on the same target.
 
@@ -147,11 +151,13 @@ API endpoints used by the dashboard:
 
 - `GET /api/dashboard/summary`
 - `GET /api/dashboard/work-items`
+- `PATCH /api/dashboard/work-items/:itemId`
 - `GET /api/dashboard/queue`
 - `GET /api/dashboard/webhooks`
 - `GET /api/dashboard/webhooks/duplicates`
 - `POST /api/dashboard/webhooks/:id/replay`
 - `GET /api/dashboard/actions`
+- `POST /api/admin/worktrees/cleanup`
 
 Stored history tables:
 
