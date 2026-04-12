@@ -110,14 +110,21 @@ function renderWorkItems(items) {
         <td>${formatDate(item.updatedAt)}</td>
         <td>
           <div class="work-item-controls" data-item-id="${escapeHtml(item.mondayItemId)}">
-            <select data-field="status" class="control-input">${statusOptions(item.status)}</select>
+            <div class="status-preset-row">
+              ${statusPresetButton(item.mondayItemId, "new", "New", item.status)}
+              ${statusPresetButton(item.mondayItemId, "processing", "Processing", item.status)}
+              ${statusPresetButton(item.mondayItemId, "pr_open", "PR Open", item.status)}
+              ${statusPresetButton(item.mondayItemId, "ready_to_merge", "Ready", item.status)}
+              ${statusPresetButton(item.mondayItemId, "awaiting_changes", "Changes", item.status)}
+              ${statusPresetButton(item.mondayItemId, "error", "Error", item.status)}
+            </div>
             <div class="control-grid">
               <input data-field="workBranch" class="control-input" placeholder="branch" value="${escapeHtml(item.workBranch || "")}" />
               <input data-field="githubPrNumber" class="control-input" placeholder="PR #" inputmode="numeric" value="${escapeHtml(item.githubPrNumber || "")}" />
               <input data-field="githubPrUrl" class="control-input" placeholder="PR URL" value="${escapeHtml(item.githubPrUrl || "")}" />
             </div>
             <div class="control-actions">
-              <button type="button" class="inline-btn" data-save-item="${escapeHtml(item.mondayItemId)}">Save</button>
+              <button type="button" class="inline-btn" data-save-item="${escapeHtml(item.mondayItemId)}">Save details</button>
             </div>
           </div>
         </td>
@@ -204,12 +211,9 @@ function replayButton(id) {
   return `<button class="inline-btn" data-replay-id="${id}">Replay</button>`;
 }
 
-function statusOptions(current) {
-  const statuses = ["new", "processing", "pr_open", "ready_to_merge", "awaiting_changes", "error"];
-  const normalized = String(current || "");
-  return statuses
-    .map((status) => `<option value="${status}"${status === normalized ? " selected" : ""}>${status}</option>`)
-    .join("");
+function statusPresetButton(itemId, value, label, current) {
+  const active = String(current || "") === value;
+  return `<button type="button" class="inline-btn${active ? " active" : ""}" data-status-preset="${value}" data-item-id="${escapeHtml(itemId)}">${label}</button>`;
 }
 
 function statusBadge(value) {
@@ -313,6 +317,21 @@ document.addEventListener("click", (event) => {
     return;
   }
 
+  const presetStatus = target.getAttribute("data-status-preset");
+  if (presetStatus) {
+    const itemId = target.getAttribute("data-item-id");
+    if (!itemId) {
+      return;
+    }
+
+    target.setAttribute("disabled", "true");
+    void saveWorkItem(itemId, { status: presetStatus }).catch((error) => {
+      lastRefreshEl.textContent = `Status update failed: ${error instanceof Error ? error.message : String(error)}`;
+      target.removeAttribute("disabled");
+    });
+    return;
+  }
+
   const saveItemId = target.getAttribute("data-save-item");
   if (saveItemId) {
     const controls = target.closest("[data-item-id]");
@@ -321,7 +340,6 @@ document.addEventListener("click", (event) => {
     }
 
     const payload = {
-      status: controls.querySelector('[data-field="status"]')?.value || null,
       workBranch: controls.querySelector('[data-field="workBranch"]')?.value || null,
       githubPrNumber: controls.querySelector('[data-field="githubPrNumber"]')?.value || null,
       githubPrUrl: controls.querySelector('[data-field="githubPrUrl"]')?.value || null
