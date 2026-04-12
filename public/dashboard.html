@@ -87,9 +87,31 @@
                 <th>Queue</th>
                 <th>HTTP</th>
                 <th>Payload</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody id="webhooks-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title-row">
+          <h2>Duplicate Webhooks</h2>
+          <span class="hint">Replay from history if needed</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Event</th>
+                <th>Item</th>
+                <th>Queue</th>
+                <th>Replay</th>
+              </tr>
+            </thead>
+            <tbody id="duplicates-table"></tbody>
           </table>
         </div>
       </section>
