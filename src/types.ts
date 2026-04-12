@@ -84,16 +84,32 @@ export interface ActionLogEntry {
   createdAt: string;
 }
 
+export interface ColumnRoutingRule {
+  column: string;
+  match?: string;
+  repoHint?: string;
+  baseBranchHint?: string;
+  branchHint?: string;
+}
+
 export interface RoutingDirectives {
   repoHint?: string;
   baseBranchHint?: string;
   branchHint?: string;
+  columnRoutes?: ColumnRoutingRule[];
 }
 
 export interface MondayItemBasics {
   itemId: string;
   boardId: string;
   title: string;
+}
+
+export interface MondayColumnValue {
+  id: string;
+  title: string | null;
+  text: string | null;
+  value: string | null;
 }
 
 export interface MondayThreadEntry {
@@ -110,6 +126,7 @@ export interface MondayThreadEntry {
 export interface MondayItemContext extends MondayItemBasics {
   boardName: string | null;
   boardDescription: string | null;
+  columnValues: MondayColumnValue[];
   thread: MondayThreadEntry[];
 }
 
