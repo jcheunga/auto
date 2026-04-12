@@ -111,6 +111,22 @@ h2 {
   box-shadow: 0 8px 18px rgba(18, 29, 40, 0.12);
 }
 
+.inline-btn {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.inline-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .cards {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
