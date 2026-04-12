@@ -365,8 +365,7 @@ export class AutomationOrchestrator {
     const mondayContext = await this.monday.getItemContext(event.itemId);
     const existing = this.db.getWorkItem(event.itemId);
     const boardRouting = parseRoutingDirectives(
-      [mondayContext.boardName, mondayContext.boardDescription].filter(Boolean).join("
-")
+      [mondayContext.boardName, mondayContext.boardDescription].filter(Boolean).join("\n")
     );
     const commentRouting = parseRoutingDirectives(event.commentBody);
     const routingHint = mergeRoutingDirectives(boardRouting, commentRouting);
