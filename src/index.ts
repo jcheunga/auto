@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import express from "express";
 import path from "node:path";
 import { config } from "./config";
@@ -89,6 +90,58 @@ app.get("/api/dashboard/webhooks", (req, res) => {
   const limit = parseLimit(req.query.limit);
   res.json({
     events: db.listWebhookEvents(limit)
+  });
+});
+
+app.get("/api/dashboard/webhooks/duplicates", (req, res) => {
+  const limit = parseLimit(req.query.limit);
+  res.json({
+    events: db.listDuplicateWebhookEvents(limit)
+  });
+});
+
+app.post("/api/dashboard/webhooks/:id/replay", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+
+  const stored = db.getWebhookEventById(id);
+  if (!stored) {
+    res.status(404).json({ error: "webhook not found" });
+    return;
+  }
+
+  const payload = injectReplayMarker(stored.payload, id);
+  const result = await orchestrator.handleMondayWebhook(payload);
+
+  db.logWebhookEvent({
+    source: "replay",
+    eventId: result.event?.eventId ?? null,
+    itemId: result.event?.itemId ?? null,
+    eventType: result.event?.eventType ?? null,
+    signatureValid: null,
+    queueStatus: result.queueStatus ?? "accepted",
+    httpStatus: 202,
+    payload
+  });
+
+  db.logAction({
+    actionType: "webhook.replayed",
+    itemId: result.event?.itemId ?? stored.event.itemId ?? null,
+    eventId: result.event?.eventId ?? stored.event.eventId ?? null,
+    message: `Replayed webhook history entry ${id}`,
+    metadata: {
+      storedWebhookId: id,
+      queueStatus: result.queueStatus ?? "accepted"
+    }
+  });
+
+  res.status(202).json({
+    accepted: true,
+    queueStatus: result.queueStatus ?? "accepted",
+    event: result.event ?? null
   });
 });
 
@@ -225,6 +278,17 @@ function shutdown(): void {
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+
+function injectReplayMarker(payload: unknown, id: number): unknown {
+  if (!payload || typeof payload !== "object") {
+    return payload;
+  }
+
+  const cloned = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>;
+  cloned.__replayEventId = crypto.randomUUID();
+  cloned.__replayedWebhookId = id;
+  return cloned;
+}
 
 function parseLimit(input: unknown, defaultLimit = 100, maxLimit = 500): number {
   const raw = Array.isArray(input) ? input[0] : input;
