@@ -92,6 +92,7 @@ export class ClaudeWorkflowAgent implements WorkflowAgent {
           WORK_REPO_NAME: gitWorkspace.repository.repo,
           WORK_BASE_BRANCH: gitWorkspace.repository.baseBranch,
           WORK_BRANCH: gitWorkspace.repository.branch ?? "",
+          WORK_SUGGESTED_BRANCH: context.suggestedBranch,
           GIT_ASKPASS: gitWorkspace.gitAskPassPath
         }
       });
@@ -199,6 +200,9 @@ function buildWorkflowPrompt(
     "- The repository is already checked out in an isolated per-job git worktree.",
     "- Your current working directory is that isolated repository workspace.",
     "- The WORK_REPO_DIR environment variable also points to that repository path.",
+    "- Use the derived suggested branch name when creating a fresh branch:",
+    `  ${context.suggestedBranch}`,
+    "- Board-level routing metadata and per-item directives have already been resolved.",
     "- Use gh CLI for repository, branch, commit, push, and PR operations.",
     "- Use Monday MCP for any Monday follow-up updates or clarifying replies.",
     "- Do not create or manage Heroku review apps in this step. The automation service handles review-app creation separately.",
@@ -258,6 +262,10 @@ function buildWorkflowPrompt(
     `- Default base branch: ${context.defaults.githubBaseBranch}`,
     `- Repo hint: ${context.hints.repoHint ?? "none"}`,
     `- Base branch hint: ${context.hints.baseBranchHint ?? "none"}`,
+    `- Branch hint: ${context.hints.branchHint ?? "none"}`,
+    `- Suggested branch: ${context.suggestedBranch}`,
+    `- Board name: ${context.board.name ?? "none"}`,
+    `- Board description: ${context.board.description ?? "none"}`,
     "",
     "Environment hints:",
     "- WORK_REPO_DIR: isolated repo workspace path",
