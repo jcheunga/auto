@@ -68,10 +68,10 @@ export function normalizeMondayWebhook(payload: unknown): MondayWebhookEnvelope 
       null,
     statusLabel,
     commentBody:
-      readString(value, ["body"]) ??
-      readString(value, ["text"]) ??
       readString(rawEvent, ["textBody"]) ??
       readString(rawEvent, ["text_body"]) ??
+      readString(value, ["text"]) ??
+      readString(value, ["body"]) ??
       null,
     raw: payload
   };
