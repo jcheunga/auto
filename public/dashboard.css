@@ -127,6 +127,11 @@ h2 {
   cursor: not-allowed;
 }
 
+.inline-btn.active {
+  background: rgba(15, 95, 168, 0.12);
+  border-color: rgba(15, 95, 168, 0.45);
+}
+
 .hero-actions {
   display: flex;
   gap: 10px;
@@ -143,6 +148,12 @@ h2 {
   display: grid;
   gap: 8px;
   min-width: 18rem;
+}
+
+.status-preset-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .control-grid {
