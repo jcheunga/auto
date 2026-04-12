@@ -84,6 +84,12 @@ export interface ActionLogEntry {
   createdAt: string;
 }
 
+export interface RoutingDirectives {
+  repoHint?: string;
+  baseBranchHint?: string;
+  branchHint?: string;
+}
+
 export interface MondayThreadEntry {
   id: string;
   kind: "update" | "reply";
@@ -95,11 +101,21 @@ export interface MondayThreadEntry {
   creatorName: string | null;
 }
 
+export interface MondayItemContext extends MondayItemBasics {
+  boardName: string | null;
+  boardDescription: string | null;
+  thread: MondayThreadEntry[];
+}
+
 export interface WorkflowAgentContext {
   item: {
     mondayItemId: string;
     boardId: string;
     title: string;
+  };
+  board: {
+    name: string | null;
+    description: string | null;
   };
   event: {
     eventId: string;
@@ -116,9 +132,12 @@ export interface WorkflowAgentContext {
     githubRepo: string;
     githubBaseBranch: string;
   };
+  routing: RoutingDirectives;
+  suggestedBranch: string;
   hints: {
     repoHint?: string;
     baseBranchHint?: string;
+    branchHint?: string;
   };
   automationTag: string;
 }
