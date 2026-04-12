@@ -152,6 +152,101 @@ app.get("/api/dashboard/actions", (req, res) => {
   });
 });
 
+app.patch("/api/dashboard/work-items/:itemId", (req, res) => {
+  const itemId = String(req.params.itemId || "").trim();
+  if (!itemId) {
+    res.status(400).json({ error: "invalid item id" });
+    return;
+  }
+
+  const existing = db.getWorkItem(itemId);
+  if (!existing) {
+    res.status(404).json({ error: "work item not found" });
+    return;
+  }
+
+  const update: Record<string, unknown> = {};
+  const body = (req.body ?? {}) as Record<string, unknown>;
+
+  if (Object.prototype.hasOwnProperty.call(body, "status")) {
+    const status = parseStatusValue(body.status);
+    if (!status) {
+      res.status(400).json({ error: "invalid status" });
+      return;
+    }
+    update.status = status;
+  }
+
+  for (const key of [
+    "title",
+    "description",
+    "workBranch",
+    "githubOwner",
+    "githubRepo",
+    "githubBaseBranch",
+    "githubPrUrl",
+    "githubPrHeadSha",
+    "herokuAppUrl",
+    "reviewAppAnnouncedAt",
+    "lastError"
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(body, key)) {
+      update[key] = parseNullableString(body[key]);
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "githubPrNumber")) {
+    const parsedNumber = parseNullableInteger(body.githubPrNumber);
+    if (parsedNumber === undefined) {
+      res.status(400).json({ error: "invalid githubPrNumber" });
+      return;
+    }
+    update.githubPrNumber = parsedNumber;
+  }
+
+  const updated = db.updateWorkItem(itemId, update as never);
+  db.logAction({
+    actionType: "admin.work_item.updated",
+    itemId,
+    message: "Updated work item through dashboard admin controls",
+    metadata: update
+  });
+
+  res.json({ item: updated });
+});
+
+app.post("/api/admin/worktrees/cleanup", async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const owner = parseNullableString(body.owner ?? body.repoOwner) ?? undefined;
+    const repo = parseNullableString(body.repo ?? body.repoName) ?? undefined;
+    const force = parseBoolean(body.force);
+    const result = await workflowAgent.cleanupWorktrees({ owner, repo, force });
+
+    db.logAction({
+      actionType: "admin.worktrees.cleanup",
+      message: "Triggered worktree cleanup from dashboard admin controls",
+      metadata: {
+        owner: owner ?? null,
+        repo: repo ?? null,
+        force: force ?? false,
+        ...result
+      }
+    });
+
+    res.json({
+      ok: true,
+      ...result
+    });
+  } catch (error) {
+    logger.error("Worktree cleanup failed", serializeError(error));
+    res.status(500).json({
+      error: "cleanup_failed",
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
+});
+
 app.post("/webhooks/monday", async (req, res) => {
   const normalized = normalizeMondayWebhook(req.body);
   const event = normalized.event;
@@ -297,4 +392,69 @@ function parseLimit(input: unknown, defaultLimit = 100, maxLimit = 500): number 
     return defaultLimit;
   }
   return Math.min(maxLimit, Math.floor(parsed));
+}
+
+function parseStatusValue(value: unknown): string | null {
+  const normalized = parseNullableString(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const allowed = new Set([
+    "new",
+    "processing",
+    "pr_open",
+    "ready_to_merge",
+    "awaiting_changes",
+    "error"
+  ]);
+
+  return allowed.has(normalized) ? normalized : null;
+}
+
+function parseNullableString(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const text = Array.isArray(value) ? String(value[0] ?? "") : String(value);
+  const trimmed = text.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function parseNullableInteger(value: unknown): number | null | undefined {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const raw = Array.isArray(value) ? value[0] : value;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
+function parseBoolean(value: unknown): boolean | undefined {
+  if (value === null || value === undefined || value === "") {
+    return undefined;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw === "string") {
+    const normalized = raw.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["0", "false", "no", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return Boolean(raw);
 }
