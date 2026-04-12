@@ -3,13 +3,15 @@
 This service automates a Monday workflow:
 
 1. A new Monday item is created with a task description.
-2. The service gathers the full Monday thread context and existing item state.
-3. It hands that context to a workflow agent command (Claude Code or another CLI).
-4. Claude decides whether to create a branch/PR, revise an existing branch, reply on Monday, or no-op.
-5. Claude uses `gh` for GitHub work and Monday MCP for Monday follow-up updates.
-6. When a PR exists and Heroku is configured, the service creates the review app deterministically.
-7. The service then calls Claude again so Claude can post the review-app URL back to Monday via MCP.
-8. When the Monday status is set to `Approved`, it marks the item ready and asks for manual merge.
+2. The service gathers the full Monday thread context, board metadata, and existing item state.
+3. It resolves repo/base/branch routing from board metadata first, then item updates.
+4. It derives a deterministic suggested branch name from the task title and item id.
+5. It hands that context to a workflow agent command (Claude Code or another CLI).
+6. Claude decides whether to create a branch/PR, revise an existing branch, reply on Monday, or no-op.
+7. Claude uses `gh` for GitHub work and Monday MCP for Monday follow-up updates.
+8. When a PR exists and Heroku is configured, the service creates the review app deterministically.
+9. The service then calls Claude again so Claude can post the review-app URL back to Monday via MCP.
+10. When the Monday status is set to `Approved`, it marks the item ready and asks for manual merge.
 
 ## Architecture
 
@@ -17,8 +19,9 @@ This service automates a Monday workflow:
 - `src/orchestrator.ts`: workflow state machine + worker scheduler.
 - `src/integrations/monday.ts`: Monday GraphQL client.
 - `src/integrations/github.ts`: GitHub CLI-backed client via `gh`.
-- `src/integrations/gitWorkspace.ts`: persistent repo cache + per-job isolated git worktrees.
+- `src/integrations/gitWorkspace.ts`: persistent repo cache + per-job isolated git worktrees + stale cleanup.
 - `src/integrations/workflowAgent.ts`: Claude-driven orchestration runner and review-app follow-up callback.
+- `src/lib/routing.ts`: board/item/comment routing directives and branch slug helpers.
 - `src/integrations/heroku.ts`: Heroku review-app creation client.
 - `src/db.ts`: SQLite persistence for item/PR mapping and durable event queue.
 
@@ -146,6 +149,8 @@ API endpoints used by the dashboard:
 - `GET /api/dashboard/work-items`
 - `GET /api/dashboard/queue`
 - `GET /api/dashboard/webhooks`
+- `GET /api/dashboard/webhooks/duplicates`
+- `POST /api/dashboard/webhooks/:id/replay`
 - `GET /api/dashboard/actions`
 
 Stored history tables:
@@ -206,3 +211,6 @@ open http://localhost:1337/dashboard
   - If PR already exists: treats update body as feedback, runs revision cycle, pushes commit.
   - If Heroku is configured and a PR/branch exists without a tracked review app, the service creates the review app and then asks Claude to post the URL back to Monday.
 - `change_column_value`: if webhook status label equals `MONDAY_STATUS_APPROVED_LABEL`, posts a manual-merge reminder.
+- Webhook history includes replay controls so you can rerun stored payloads with synthetic event ids.
+- Duplicate webhook events are listed in the dashboard to help diagnose dedup behavior.
+- Stale per-repo worktrees are periodically swept and git worktree prune is run automatically.
