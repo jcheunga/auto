@@ -119,6 +119,56 @@ export class GitWorkspaceManager {
     }
   }
 
+  async cleanupWorktrees(options: { owner?: string; repo?: string; force?: boolean } = {}): Promise<{
+    reposScanned: number;
+    worktreesRemoved: number;
+    repoKeys: string[];
+  }> {
+    const worktreesRoot = path.join(this.rootDir, "worktrees");
+    const force = options.force ?? false;
+    const targetRepoKey = options.owner && options.repo ? toPathSegment(`${options.owner}__${options.repo}`) : null;
+    const repoKeys: string[] = [];
+    let worktreesRemoved = 0;
+
+    let dirents: Array<{ name: string; isDirectory(): boolean }> = [];
+    try {
+      dirents = await fs.readdir(worktreesRoot, { withFileTypes: true });
+    } catch {
+      return { reposScanned: 0, worktreesRemoved: 0, repoKeys: [] };
+    }
+
+    for (const entry of dirents) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      if (targetRepoKey && entry.name !== targetRepoKey) {
+        continue;
+      }
+
+      const repoKey = entry.name;
+      repoKeys.push(repoKey);
+      const cacheDir = path.join(this.rootDir, "repos", repoKey);
+      const worktreesDir = path.join(worktreesRoot, repoKey);
+
+      await this.withRepoLock(repoKey, async () => {
+        const gitEnv = await this.buildGitEnv();
+        worktreesRemoved += await this.sweepStaleWorktrees(worktreesDir, cacheDir, gitEnv, repoKey, {
+          force
+        });
+        try {
+          await runCommand(`git --git-dir=${shellEscape(cacheDir)} worktree prune`, { env: gitEnv });
+        } catch (error) {
+          this.logger.warn("git worktree prune failed during admin cleanup", {
+            cacheDir,
+            ...serializeError(error)
+          });
+        }
+      });
+    }
+
+    return { reposScanned: repoKeys.length, worktreesRemoved, repoKeys };
+  }
+
   private async ensureRepoCache(
     cacheDir: string,
     repository: PreparedGitWorkspace["repository"],
@@ -228,15 +278,17 @@ export class GitWorkspaceManager {
     worktreesDir: string,
     cacheDir: string,
     gitEnv: NodeJS.ProcessEnv,
-    repoKey: string
-  ): Promise<void> {
+    repoKey: string,
+    options: { force?: boolean; staleAfterMs?: number } = {}
+  ): Promise<number> {
     const now = Date.now();
     const lastSweep = this.lastSweepAtByRepo.get(repoKey) ?? 0;
     const sweepIntervalMs = 30 * 60 * 1000;
-    const staleAfterMs = 7 * 24 * 60 * 60 * 1000;
+    const staleAfterMs = options.staleAfterMs ?? 7 * 24 * 60 * 60 * 1000;
+    const force = options.force ?? false;
 
-    if (now - lastSweep < sweepIntervalMs) {
-      return;
+    if (!force && now - lastSweep < sweepIntervalMs) {
+      return 0;
     }
 
     this.lastSweepAtByRepo.set(repoKey, now);
@@ -248,13 +300,14 @@ export class GitWorkspaceManager {
         path: path.join(worktreesDir, entry.name)
       }));
     } catch {
-      return;
+      return 0;
     }
 
+    let removed = 0;
     for (const entry of entries) {
       try {
         const stat = await fs.stat(entry.path);
-        if (now - stat.mtimeMs < staleAfterMs) {
+        if (!force && now - stat.mtimeMs < staleAfterMs) {
           continue;
         }
 
@@ -264,6 +317,7 @@ export class GitWorkspaceManager {
           ageHours: Math.round((now - stat.mtimeMs) / (60 * 60 * 1000))
         });
         await fs.rm(entry.path, { recursive: true, force: true });
+        removed += 1;
       } catch (error) {
         this.logger.warn("Failed to inspect or remove stale worktree", {
           repoKey,
@@ -281,6 +335,8 @@ export class GitWorkspaceManager {
         ...serializeError(error)
       });
     }
+
+    return removed;
   }
 
   private async buildGitEnv(): Promise<NodeJS.ProcessEnv> {
