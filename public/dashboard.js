@@ -5,17 +5,19 @@ const summaryCards = document.getElementById("summary-cards");
 const queueTable = document.getElementById("queue-table");
 const itemsTable = document.getElementById("items-table");
 const webhooksTable = document.getElementById("webhooks-table");
+const duplicatesTable = document.getElementById("duplicates-table");
 const actionsTable = document.getElementById("actions-table");
 
 const REFRESH_INTERVAL_MS = 6000;
 
 async function loadDashboard() {
   try {
-    const [summaryResp, itemsResp, queueResp, webhooksResp, actionsResp] = await Promise.all([
+    const [summaryResp, itemsResp, queueResp, webhooksResp, duplicatesResp, actionsResp] = await Promise.all([
       fetchJson("/api/dashboard/summary"),
       fetchJson("/api/dashboard/work-items?limit=120"),
       fetchJson("/api/dashboard/queue?limit=120"),
       fetchJson("/api/dashboard/webhooks?limit=120"),
+      fetchJson("/api/dashboard/webhooks/duplicates?limit=80"),
       fetchJson("/api/dashboard/actions?limit=180")
     ]);
 
@@ -23,6 +25,7 @@ async function loadDashboard() {
     renderQueue(queueResp.jobs || []);
     renderWorkItems(itemsResp.items || []);
     renderWebhooks(webhooksResp.events || []);
+    renderDuplicateWebhooks(duplicatesResp.events || []);
     renderActions(actionsResp.actions || []);
     lastRefreshEl.textContent = `Updated ${new Date().toLocaleString()}`;
   } catch (error) {
@@ -110,7 +113,7 @@ function renderWorkItems(items) {
 
 function renderWebhooks(events) {
   if (events.length === 0) {
-    webhooksTable.innerHTML = `<tr><td colspan="6" class="muted">No webhook events captured yet.</td></tr>`;
+    webhooksTable.innerHTML = `<tr><td colspan="7" class="muted">No webhook events captured yet.</td></tr>`;
     return;
   }
 
@@ -129,6 +132,28 @@ function renderWebhooks(events) {
             <pre class="payload">${escapeHtml(prettyJson(event.payloadJson))}</pre>
           </details>
         </td>
+        <td>${replayButton(event.id)}</td>
+      </tr>
+    `
+    )
+    .join("");
+}
+
+function renderDuplicateWebhooks(events) {
+  if (events.length === 0) {
+    duplicatesTable.innerHTML = `<tr><td colspan="5" class="muted">No duplicate webhook events.</td></tr>`;
+    return;
+  }
+
+  duplicatesTable.innerHTML = events
+    .map(
+      (event) => `
+      <tr>
+        <td>${formatDate(event.createdAt)}</td>
+        <td><code>${escapeHtml(event.eventType || "unknown")}</code></td>
+        <td><code>${escapeHtml(event.itemId || "-")}</code></td>
+        <td>${statusBadge(event.queueStatus)}</td>
+        <td>${replayButton(event.id)}</td>
       </tr>
     `
     )
@@ -157,6 +182,10 @@ function renderActions(actions) {
     `
     )
     .join("");
+}
+
+function replayButton(id) {
+  return `<button class="inline-btn" data-replay-id="${id}">Replay</button>`;
 }
 
 function statusBadge(value) {
@@ -203,16 +232,39 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url);
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, options);
   if (!response.ok) {
     throw new Error(`${url} -> ${response.status}`);
   }
   return response.json();
 }
 
+async function replayWebhook(eventId) {
+  await fetchJson(`/api/dashboard/webhooks/${eventId}/replay`, { method: "POST" });
+  await loadDashboard();
+}
+
 refreshBtn.addEventListener("click", () => {
   void loadDashboard();
+});
+
+document.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  const replayId = target.getAttribute("data-replay-id");
+  if (!replayId) {
+    return;
+  }
+
+  target.setAttribute("disabled", "true");
+  void replayWebhook(replayId).catch((error) => {
+    lastRefreshEl.textContent = `Replay failed: ${error instanceof Error ? error.message : String(error)}`;
+    target.removeAttribute("disabled");
+  });
 });
 
 void loadDashboard();
