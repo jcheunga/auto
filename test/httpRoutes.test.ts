@@ -256,3 +256,94 @@ test("HTTP routes reject invalid dashboard and webhook inputs", async () => {
     db.close();
   }
 });
+
+test("HTTP routes serve dashboard assets and list history endpoints with limits", async () => {
+  const db = createDb();
+  try {
+    const app = createApp({
+      db,
+      config: { monday: { signingSecret: undefined } },
+      orchestrator: {
+        getRuntimeStats: () => ({ running: false, activeWorkers: 0, lockedItemIds: [] }),
+        handleMondayWebhook: async () => ({ queueStatus: "ignored" })
+      },
+      workflowAgent: {
+        cleanupWorktrees: async () => ({ removed: 0, scanned: 0 })
+      }
+    });
+
+    db.createWorkItem({
+      mondayItemId: "item-1",
+      boardId: "board-1",
+      title: "One",
+      description: "",
+      status: "new"
+    });
+    db.createWorkItem({
+      mondayItemId: "item-2",
+      boardId: "board-1",
+      title: "Two",
+      description: "",
+      status: "processing"
+    });
+
+    db.logWebhookEvent({
+      source: "monday",
+      eventId: "event-1",
+      itemId: "item-1",
+      eventType: "create_update",
+      signatureValid: true,
+      queueStatus: "accepted",
+      httpStatus: 202,
+      payload: { id: 1 }
+    });
+    db.logWebhookEvent({
+      source: "monday",
+      eventId: "event-2",
+      itemId: "item-2",
+      eventType: "create_update",
+      signatureValid: true,
+      queueStatus: "duplicate",
+      httpStatus: 202,
+      payload: { id: 2 }
+    });
+    db.logAction({ actionType: "action.one", itemId: "item-1", message: "one" });
+    db.logAction({ actionType: "action.two", itemId: "item-2", message: "two" });
+
+    await withServer(app, async (baseUrl) => {
+      const dashboard = await fetch(`${baseUrl}/dashboard`);
+      assert.equal(dashboard.status, 200);
+      const html = await dashboard.text();
+      assert.match(html, /Automation Dashboard/);
+
+      const stylesheet = await fetch(`${baseUrl}/assets/dashboard.css`);
+      assert.equal(stylesheet.status, 200);
+      assert.match(await stylesheet.text(), /hero-actions/);
+
+      const workItems = await fetch(`${baseUrl}/api/dashboard/work-items?limit=1`);
+      assert.equal(workItems.status, 200);
+      const workItemsBody = await workItems.json() as any;
+      assert.equal(workItemsBody.items.length, 1);
+
+      const webhooks = await fetch(`${baseUrl}/api/dashboard/webhooks?limit=1`);
+      assert.equal(webhooks.status, 200);
+      const webhooksBody = await webhooks.json() as any;
+      assert.equal(webhooksBody.events.length, 1);
+      assert.equal(webhooksBody.events[0].eventId, "event-2");
+
+      const duplicates = await fetch(`${baseUrl}/api/dashboard/webhooks/duplicates?limit=10`);
+      assert.equal(duplicates.status, 200);
+      const duplicatesBody = await duplicates.json() as any;
+      assert.equal(duplicatesBody.events.length, 1);
+      assert.equal(duplicatesBody.events[0].eventId, "event-2");
+
+      const actions = await fetch(`${baseUrl}/api/dashboard/actions?limit=1`);
+      assert.equal(actions.status, 200);
+      const actionsBody = await actions.json() as any;
+      assert.equal(actionsBody.actions.length, 1);
+      assert.equal(actionsBody.actions[0].actionType, "action.two");
+    });
+  } finally {
+    db.close();
+  }
+});
