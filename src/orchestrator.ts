@@ -823,7 +823,7 @@ function isAutomationCommentEvent(event: MondayNormalizedEvent): boolean {
   return isCommentEvent(event.type) && Boolean(event.commentBody?.includes(AUTOMATION_TAG));
 }
 
-function formatErrorForMonday(message: string): string {
+export function formatErrorForMonday(message: string): string {
   const lines = message
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -838,7 +838,7 @@ function formatErrorForMonday(message: string): string {
   return preferredLine.replace(/\s+/g, " ").slice(0, 300);
 }
 
-function deriveStatusFromWorkflowResult(
+export function deriveStatusFromWorkflowResult(
   current: WorkItem,
   result: WorkflowAgentResult
 ): WorkStatus {
