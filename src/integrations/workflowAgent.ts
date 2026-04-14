@@ -190,7 +190,7 @@ export class ClaudeWorkflowAgent implements WorkflowAgent {
   }
 }
 
-function buildWorkflowPrompt(
+export function buildWorkflowPrompt(
   context: WorkflowAgentContext,
   contextFile: string,
   resultFile: string
@@ -284,7 +284,7 @@ function buildWorkflowPrompt(
   ].join("\n");
 }
 
-function buildReviewAppAnnouncementPrompt(
+export function buildReviewAppAnnouncementPrompt(
   context: WorkflowAgentReviewAppContext,
   contextFile: string,
   resultFile: string
@@ -334,7 +334,7 @@ function buildReviewAppAnnouncementPrompt(
   ].join("\n");
 }
 
-function commandLabel(command: string): string {
+export function commandLabel(command: string): string {
   const trimmed = command.trim();
   return trimmed.split(/\s+/, 1)[0] || "command";
 }
