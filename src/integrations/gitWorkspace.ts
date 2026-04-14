@@ -412,7 +412,7 @@ export class GitWorkspaceManager {
   }
 }
 
-function resolveRepositoryTarget(context: WorkflowAgentContext): PreparedGitWorkspace["repository"] {
+export function resolveRepositoryTarget(context: WorkflowAgentContext): PreparedGitWorkspace["repository"] {
   const fromWorkItem = {
     owner: context.existingWorkItem?.githubOwner ?? null,
     repo: context.existingWorkItem?.githubRepo ?? null,
@@ -452,15 +452,15 @@ function parseRepoHint(
   };
 }
 
-function repositoryHttpsUrl(owner: string, repo: string): string {
+export function repositoryHttpsUrl(owner: string, repo: string): string {
   return `https://github.com/${owner}/${repo}.git`;
 }
 
-function toPathSegment(value: string): string {
+export function toPathSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "value";
 }
 
-function shellEscape(value: string): string {
+export function shellEscape(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
