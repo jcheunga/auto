@@ -152,6 +152,45 @@ test("handleMondayWebhook enqueues item-created events for later processing", as
   }
 });
 
+
+test("handleMondayWebhook generates a queue id when Monday omits one", async () => {
+  const { AutomationOrchestrator } = await orchestratorPromise;
+  const db = createDb();
+  try {
+    const orchestrator = new AutomationOrchestrator(db, makeConfig(), {
+      getItemContext: async (itemId: string) => makeItemContext(itemId)
+    } as never, {
+      run: async () => ({ decision: "noop", summary: "Noop" }),
+      announceReviewApp: async () => ({ postedUpdate: false, updateSummary: "noop" }),
+      cleanupWorktrees: async () => ({ reposScanned: 0, worktreesRemoved: 0, repoKeys: [] })
+    } as never, {
+      isConfigured: () => false
+    } as never);
+
+    const result = await orchestrator.handleMondayWebhook({
+      event: {
+        type: "create_update",
+        pulseId: 100,
+        boardId: 11,
+        columnId: "updates",
+        value: {
+          text: "Please review"
+        }
+      }
+    });
+
+    assert.equal(result.queueStatus, "accepted");
+    assert.ok(result.event?.eventId);
+    assert.equal(result.event?.itemId, "100");
+    const queued = db.listQueueJobs();
+    assert.equal(queued.length, 1);
+    assert.equal(queued[0].itemId, "100");
+    assert.equal(queued[0].eventId.length > 0, true);
+  } finally {
+    db.close();
+  }
+});
+
 function createDb(): AppDb {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "auto-orchestrator-test-"));
   return new AppDb(path.join(dir, "data.sqlite"));
